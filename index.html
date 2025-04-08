@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>3D Gaussian Splat Simulation</title>
+  <style>
+    /* Remove margins and ensure the canvas fills the viewport */
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <!-- The simulation is entirely script-based -->
+  <script type="module">
+    // Import Three.js and OrbitControls from public CDNs (ES modules)
+    import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
+    import { OrbitControls } from 'https://unpkg.com/three@0.152.2/examples/jsm/controls/OrbitControls.js';
+    
+    // Set up the Three.js scene, camera, and renderer
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(
+      75, 
+      window.innerWidth / window.innerHeight, 
+      0.1, 
+      1000
+    );
+    // Place the camera a bit away from the center for a better view
+    camera.position.z = 1;
+    
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+    
+    // Add orbit controls to allow interactive rotation of the scene
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    
+    // Load the image as a texture. Replace the URL with any publicly accessible image.
+    const imageURL = 'https://threejsfundamentals.org/threejs/resources/images/flower-1.jpg';
+    const loader = new THREE.TextureLoader();
+    loader.load(imageURL, texture => {
+      // Create an offscreen canvas to extract pixel data from the image
+      const image = texture.image;
+      const canvas = document.createElement('canvas');
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(image, 0, 0);
+      
+      // Get the image pixel data (RGBA)
+      const imageData = ctx.getImageData(0, 0, image.width, image.height).data;
+      
+      // Arrays to hold positions and colors for each splat
+      const positions = [];
+      const colors = [];
+      
+      // Set a sampling step (skip factor) for performance; adjust as desired
+      const pixelSkip = 3;
+      const width = image.width;
+      const height = image.height;
+      
+      // Loop over the pixels in the image, skipping as necessary
+      for (let y = 0; y < height; y += pixelSkip) {
+        for (let x = 0; x < width; x += pixelSkip) {
+          const index = (y * width + x) * 4;
+          const r = imageData[index] / 255;
+          const g = imageData[index + 1] / 255;
+          const b = imageData[index + 2] / 255;
+          const a = imageData[index + 3] / 255;
+          // Optionally ignore nearly transparent pixels
+          if (a < 0.1) continue;
+          
+          // Map the x,y image coordinates to 3D space (centered around 0)
+          const xpos = (x - width / 2) / width;
+          const ypos = -(y - height / 2) / height; // Note: invert y to match Three.js coordinate system
+          const zpos = 0.0;
+          
+          positions.push(xpos, ypos, zpos);
+          colors.push(r, g, b);
+        }
+      }
+      
+      // Create a BufferGeometry and attach the position and color attributes
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute(
+        'position', 
+        new THREE.Float32BufferAttribute(positions, 3)
+      );
+      geometry.setAttribute(
+        'color', 
+        new THREE.Float32BufferAttribute(colors, 3)
+      );
+      
+      // Build a custom ShaderMaterial that displays each point as a Gaussian splat.
+      // The vertex shader passes the per-point color to the fragment shader.
+      // The fragment shader uses gl_PointCoord to compute a gaussian falloff.
+      const material = new THREE.ShaderMaterial({
+        vertexShader: `
+          attribute vec3 color;
+          varying vec3 vColor;
+          void main() {
+            vColor = color;
+            // Set a constant point size (you could adjust this or base it on distance)
+            gl_PointSize = 4.0;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          precision mediump float;
+          varying vec3 vColor;
+          void main() {
+            // Get coordinate within the point [0.0, 1.0] and center it
+            vec2 centeredCoord = gl_PointCoord - vec2(0.5);
+            // Compute squared distance from the center of the point
+            float dist = dot(centeredCoord, centeredCoord);
+            // Gaussian falloff with an adjustable constant (10.0 here controls the spread)
+            float alpha = exp(-dist * 10.0);
+            gl_FragColor = vec4(vColor, alpha);
+          }
+        `,
+        vertexColors: true,
+        transparent: true
+      });
+      
+      // Create a Points object (a point cloud) with the geometry and custom material
+      const points = new THREE.Points(geometry, material);
+      scene.add(points);
+    });
+    
+    // The animation loop to render the scene and update controls
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+    
+    // Ensure the renderer and camera are updated when the window is resized
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
